@@ -13,12 +13,16 @@
 -- • Username / NIP: admin
 -- • Password Default: admin123  (atau tanggal lahir: 01011990)
 -- *Segera ubah nama dan password di dashboard superadmin setelah login pertama!
+--
+-- 🔄 IDEMPOTENT: Script ini aman dijalankan berkali-kali untuk upgrade skema baru.
 -- ==============================================================================
 
 -- 1. AKTIFKAN EKSTENSI UUID
 create extension if not exists "uuid-ossp";
 
+-- ==============================================================================
 -- 2. TABEL STAF SEKOLAH (Superadmin, Kepala Sekolah, Waka, Kesiswaan, Wali Kelas)
+-- ==============================================================================
 create table if not exists staf_sekolah (
   id uuid primary key default gen_random_uuid(),
   auth_id uuid unique,
@@ -33,7 +37,16 @@ create table if not exists staf_sekolah (
   created_at timestamptz default now()
 );
 
+-- Kolom migrasi aman jika tabel sudah ada sebelumnya
+alter table staf_sekolah add column if not exists sudah_ganti_password boolean default false;
+alter table staf_sekolah add column if not exists tanggal_lahir date not null default '1990-01-01';
+
+create index if not exists idx_staf_nip on staf_sekolah(nip_atau_nik);
+create index if not exists idx_staf_role on staf_sekolah(role);
+
+-- ==============================================================================
 -- 3. TABEL KELAS (Daftar Rombel Sekolah)
+-- ==============================================================================
 create table if not exists kelas (
   id uuid primary key default gen_random_uuid(),
   nama_kelas text not null unique,
@@ -54,7 +67,9 @@ begin
   end if;
 end $$;
 
--- 4. TABEL SISWA
+-- ==============================================================================
+-- 4. TABEL SISWA (Mendukung Impor Excel Dapodik & Input Siswa Manual 1-per-1)
+-- ==============================================================================
 create table if not exists siswa (
   id uuid primary key default gen_random_uuid(),
   auth_id uuid unique,
@@ -66,7 +81,14 @@ create table if not exists siswa (
   created_at timestamptz default now()
 );
 
--- 5. TABEL KEBIASAAN (7 Kebiasaan Resmi Kemendikdasmen)
+alter table siswa add column if not exists sudah_ganti_password boolean default false;
+
+create index if not exists idx_siswa_kelas on siswa(kelas_id);
+create index if not exists idx_siswa_nisn on siswa(nisn);
+
+-- ==============================================================================
+-- 5. TABEL KEBIASAAN (7 Kebiasaan Resmi Kemendikdasmen RI)
+-- ==============================================================================
 create table if not exists kebiasaan (
   id serial primary key,
   nama text not null,
@@ -83,7 +105,9 @@ create table if not exists kebiasaan (
   warna_tema text default 'emerald'
 );
 
+-- ==============================================================================
 -- 6. TABEL ENTRI JURNAL (Submisi Harian Siswa & Bukti Foto)
+-- ==============================================================================
 create table if not exists entri_jurnal (
   id uuid primary key default gen_random_uuid(),
   siswa_id uuid not null references siswa(id) on delete cascade,
@@ -103,11 +127,17 @@ create table if not exists entri_jurnal (
   constraint uq_siswa_tanggal_kebiasaan_urutan unique (siswa_id, tanggal, kebiasaan_id, urutan_ke)
 );
 
+alter table entri_jurnal add column if not exists flag_foto_mencurigakan boolean default false;
+alter table entri_jurnal add column if not exists alasan_flag text;
+alter table entri_jurnal add column if not exists status_waktu text;
+
 create index if not exists idx_entri_jurnal_tanggal on entri_jurnal(tanggal);
 create index if not exists idx_entri_jurnal_siswa_tanggal on entri_jurnal(siswa_id, tanggal);
 create index if not exists idx_entri_jurnal_kebiasaan on entri_jurnal(kebiasaan_id);
 
+-- ==============================================================================
 -- 7. TABEL FEEDBACK (Bimbingan / Komentar Wali Kelas)
+-- ==============================================================================
 create table if not exists feedback (
   id uuid primary key default gen_random_uuid(),
   staf_id uuid not null references staf_sekolah(id) on delete cascade,
@@ -119,7 +149,9 @@ create table if not exists feedback (
 
 create index if not exists idx_feedback_siswa on feedback(siswa_id);
 
+-- ==============================================================================
 -- 8. TABEL ARAHAN WALI KELAS (Instruksi Pimpinan ke Wali Kelas)
+-- ==============================================================================
 create table if not exists arahan_wali_kelas (
   id uuid primary key default gen_random_uuid(),
   staf_pengirim_id uuid not null references staf_sekolah(id) on delete cascade,
@@ -133,7 +165,9 @@ create table if not exists arahan_wali_kelas (
 
 create index if not exists idx_arahan_kelas on arahan_wali_kelas(kelas_id);
 
+-- ==============================================================================
 -- 9. TABEL LOG AUDIT PENGHAPUSAN
+-- ==============================================================================
 create table if not exists log_hapus (
   id uuid primary key default gen_random_uuid(),
   entri_id uuid,
@@ -143,7 +177,9 @@ create table if not exists log_hapus (
   waktu timestamptz default now()
 );
 
+-- ==============================================================================
 -- 10. TABEL SUARA SISWA (Kotak Aspirasi & Curhat)
+-- ==============================================================================
 create table if not exists suara_siswa (
   id uuid primary key default gen_random_uuid(),
   siswa_id uuid not null references siswa(id) on delete cascade,
@@ -158,12 +194,69 @@ create table if not exists suara_siswa (
   created_at timestamptz default now()
 );
 
+alter table suara_siswa add column if not exists tanggapan text;
+alter table suara_siswa add column if not exists tanggapan_oleh_staf_id uuid references staf_sekolah(id) on delete set null;
+alter table suara_siswa add column if not exists tanggapan_at timestamptz;
+
 create index if not exists idx_suara_siswa_siswa on suara_siswa(siswa_id);
 create index if not exists idx_suara_siswa_kelas on suara_siswa(kelas_id);
 create index if not exists idx_suara_siswa_created_at on suara_siswa(created_at desc);
 
 -- ==============================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- 11. TABEL PROFIL & KUSTOMISASI SEKOLAH (NAMA, LOGO, NPSN, MOTTO, KONTAK, STORAGE)
+-- ==============================================================================
+create table if not exists profil_sekolah (
+  id text primary key default 'main',
+  nama text not null default 'SMPN 2 Glagah',
+  jenjang text default 'SMP',
+  npsn text not null default '20525649',
+  status text default 'Negeri',
+  alamat text not null default 'Jl. Kenjo No.45, Glagah, Banyuwangi, Jawa Timur',
+  kabupaten text not null default 'Kabupaten Banyuwangi',
+  provinsi text not null default 'Jawa Timur',
+  akreditasi text default 'A',
+  tahun_ajaran text default '2026/2027',
+  telepon text default '(0333) 421000',
+  email text default 'smpn2glagah@gmail.com',
+  website text default 'https://smpnegeri2glagah.sch.id',
+  motto text default 'Berakhlak Mulia, Berprestasi, dan Berkarakter Luhur',
+  logo_url text default '/logos/logo_smpn2_glagah.png',
+  logo_kabupaten_url text default '/logos/logo_banyuwangi.png',
+  nama_kepala_sekolah text default 'Drs. Bambang Sudarmono, M.Pd',
+  nip_kepala_sekolah text default '197201011998031002',
+  storage_provider text default 'supabase',
+  storage_gdrive_url text default '',
+  updated_at timestamptz default now()
+);
+
+alter table profil_sekolah add column if not exists storage_provider text default 'supabase';
+alter table profil_sekolah add column if not exists storage_gdrive_url text default '';
+
+-- ==============================================================================
+-- 12. TABEL KOMUNIKASI & BIMBINGAN SISWA-GURU
+-- ==============================================================================
+create table if not exists pesan_komunikasi (
+  id text primary key,
+  pengirim_id text not null,
+  pengirim_nama text not null,
+  pengirim_role text not null,
+  penerima_id text not null,
+  penerima_nama text not null,
+  penerima_role text not null,
+  kelas_id text,
+  kelas_nama text,
+  subjek text not null,
+  pesan text not null,
+  sudah_dibaca boolean default false,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_pesan_komunikasi_pengirim on pesan_komunikasi(pengirim_id);
+create index if not exists idx_pesan_komunikasi_penerima on pesan_komunikasi(penerima_id);
+create index if not exists idx_pesan_komunikasi_created_at on pesan_komunikasi(created_at desc);
+
+-- ==============================================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES (IDEMPOTENT / SAFE RE-RUN)
 -- ==============================================================================
 alter table staf_sekolah enable row level security;
 alter table kelas enable row level security;
@@ -174,28 +267,72 @@ alter table feedback enable row level security;
 alter table arahan_wali_kelas enable row level security;
 alter table log_hapus enable row level security;
 alter table suara_siswa enable row level security;
+alter table profil_sekolah enable row level security;
+alter table pesan_komunikasi enable row level security;
 
--- Kebijakan Akses Penuh untuk Klien Anon
+-- Drop existing policies first so this script never fails if re-run
+drop policy if exists "Allow all kebiasaan" on kebiasaan;
 create policy "Allow all kebiasaan" on kebiasaan for all using (true) with check (true);
+
+drop policy if exists "Allow all kelas" on kelas;
 create policy "Allow all kelas" on kelas for all using (true) with check (true);
+
+drop policy if exists "Allow all siswa" on siswa;
 create policy "Allow all siswa" on siswa for all using (true) with check (true);
+
+drop policy if exists "Allow all staf" on staf_sekolah;
 create policy "Allow all staf" on staf_sekolah for all using (true) with check (true);
+
+drop policy if exists "Allow all entri_jurnal" on entri_jurnal;
 create policy "Allow all entri_jurnal" on entri_jurnal for all using (true) with check (true);
+
+drop policy if exists "Allow all feedback" on feedback;
 create policy "Allow all feedback" on feedback for all using (true) with check (true);
+
+drop policy if exists "Allow all arahan_wali_kelas" on arahan_wali_kelas;
 create policy "Allow all arahan_wali_kelas" on arahan_wali_kelas for all using (true) with check (true);
+
+drop policy if exists "Allow all log_hapus" on log_hapus;
 create policy "Allow all log_hapus" on log_hapus for all using (true) with check (true);
+
+drop policy if exists "Allow all suara_siswa" on suara_siswa;
 create policy "Allow all suara_siswa" on suara_siswa for all using (true) with check (true);
 
+drop policy if exists "Allow read profil_sekolah" on profil_sekolah;
+create policy "Allow read profil_sekolah" on profil_sekolah for select using (true);
+drop policy if exists "Allow insert profil_sekolah" on profil_sekolah;
+create policy "Allow insert profil_sekolah" on profil_sekolah for insert with check (true);
+drop policy if exists "Allow update profil_sekolah" on profil_sekolah;
+create policy "Allow update profil_sekolah" on profil_sekolah for update using (true);
+drop policy if exists "Allow delete profil_sekolah" on profil_sekolah;
+create policy "Allow delete profil_sekolah" on profil_sekolah for delete using (true);
+
+drop policy if exists "Allow read pesan_komunikasi" on pesan_komunikasi;
+create policy "Allow read pesan_komunikasi" on pesan_komunikasi for select using (true);
+drop policy if exists "Allow insert pesan_komunikasi" on pesan_komunikasi;
+create policy "Allow insert pesan_komunikasi" on pesan_komunikasi for insert with check (true);
+drop policy if exists "Allow update pesan_komunikasi" on pesan_komunikasi;
+create policy "Allow update pesan_komunikasi" on pesan_komunikasi for update using (true);
+drop policy if exists "Allow delete pesan_komunikasi" on pesan_komunikasi;
+create policy "Allow delete pesan_komunikasi" on pesan_komunikasi for delete using (true);
+
 -- ==============================================================================
--- STORAGE BUCKET: BUKTI FOTO JURNAL
+-- STORAGE BUCKET: BUKTI FOTO JURNAL & CONFIG
 -- ==============================================================================
 insert into storage.buckets (id, name, public)
 values ('bukti_foto', 'bukti_foto', true)
 on conflict (id) do update set public = true;
 
+drop policy if exists "Bukti foto dapat dibaca publik" on storage.objects;
 create policy "Bukti foto dapat dibaca publik" on storage.objects for select using (bucket_id = 'bukti_foto');
+
+drop policy if exists "Public upload bukti foto" on storage.objects;
 create policy "Public upload bukti foto" on storage.objects for insert with check (bucket_id = 'bukti_foto');
+
+drop policy if exists "Public update bukti foto" on storage.objects;
 create policy "Public update bukti foto" on storage.objects for update using (bucket_id = 'bukti_foto');
+
+drop policy if exists "Public delete bukti foto" on storage.objects;
 create policy "Public delete bukti foto" on storage.objects for delete using (bucket_id = 'bukti_foto');
 
 -- ==============================================================================
@@ -253,65 +390,12 @@ values (
 on conflict (nip_atau_nik) do nothing;
 
 -- ==============================================================================
--- 10. TABEL PROFIL & KUSTOMISASI SEKOLAH (NAMA, LOGO, NPSN, MOTTO, KONTAK)
+-- SEED DATA AWAL: PROFIL SEKOLAH DEFAULT
 -- ==============================================================================
-create table if not exists profil_sekolah (
-  id text primary key default 'main',
-  nama text not null default 'SMPN 2 Glagah',
-  jenjang text default 'SMP',
-  npsn text not null default '20525649',
-  status text default 'Negeri',
-  alamat text not null default 'Jl. Kenjo No.45, Glagah, Banyuwangi, Jawa Timur',
-  kabupaten text not null default 'Kabupaten Banyuwangi',
-  provinsi text not null default 'Jawa Timur',
-  akreditasi text default 'A',
-  tahun_ajaran text default '2026/2027',
-  telepon text default '(0333) 421000',
-  email text default 'smpn2glagah@gmail.com',
-  website text default 'https://smpnegeri2glagah.sch.id',
-  motto text default 'Berakhlak Mulia, Berprestasi, dan Berkarakter Luhur',
-  logo_url text default '/logos/logo_smpn2_glagah.png',
-  logo_kabupaten_url text default '/logos/logo_banyuwangi.png',
-  nama_kepala_sekolah text default 'Drs. Bambang Sudarmono, M.Pd',
-  nip_kepala_sekolah text default '197201011998031002',
-  updated_at timestamptz default now()
-);
-
-alter table profil_sekolah enable row level security;
-
-create policy "Allow read profil_sekolah" on profil_sekolah for select using (true);
-create policy "Allow insert profil_sekolah" on profil_sekolah for insert with check (true);
-create policy "Allow update profil_sekolah" on profil_sekolah for update using (true);
-create policy "Allow delete profil_sekolah" on profil_sekolah for delete using (true);
-
 insert into profil_sekolah (id, nama, npsn, alamat, kabupaten, provinsi)
 values ('main', 'SMPN 2 Glagah', '20525649', 'Jl. Kenjo No.45, Glagah, Banyuwangi, Jawa Timur', 'Kabupaten Banyuwangi', 'Jawa Timur')
 on conflict (id) do nothing;
 
 -- ==============================================================================
--- 11. TABEL KOMUNIKASI & BIMBINGAN SISWA-GURU
+-- SELESAI! Seluruh tabel, relasi, indeks, keamanan RLS, dan seed data siap dipakai.
 -- ==============================================================================
-create table if not exists pesan_komunikasi (
-  id text primary key,
-  pengirim_id text not null,
-  pengirim_nama text not null,
-  pengirim_role text not null,
-  penerima_id text not null,
-  penerima_nama text not null,
-  penerima_role text not null,
-  kelas_id text,
-  kelas_nama text,
-  subjek text not null,
-  pesan text not null,
-  sudah_dibaca boolean default false,
-  created_at timestamptz default now()
-);
-
-alter table pesan_komunikasi enable row level security;
-
-create policy "Allow read pesan_komunikasi" on pesan_komunikasi for select using (true);
-create policy "Allow insert pesan_komunikasi" on pesan_komunikasi for insert with check (true);
-create policy "Allow update pesan_komunikasi" on pesan_komunikasi for update using (true);
-create policy "Allow delete pesan_komunikasi" on pesan_komunikasi for delete using (true);
-
-

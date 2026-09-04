@@ -1088,16 +1088,38 @@ export class JournalService {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: fileData, error } = await supabase.storage.from('bukti_foto').download('chat/messages.json');
-        if (fileData && !error) {
-          const text = await fileData.text();
-          const remoteList: PesanKomunikasi[] = JSON.parse(text);
-          if (Array.isArray(remoteList)) {
-            const map = new Map<string, PesanKomunikasi>();
-            remoteList.forEach(m => map.set(m.id, m));
-            localList.forEach(m => map.set(m.id, m));
-            localList = Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            localStorage.setItem('jurnal_7k_pesan_komunikasi', JSON.stringify(localList));
+        // 1. Coba ambil dari tabel pesan_komunikasi terlebih dahulu jika ada
+        const { data: dbRows, error: dbErr } = await supabase
+          .from('pesan_komunikasi')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(500);
+
+        if (dbRows && !dbErr && dbRows.length > 0) {
+          const map = new Map<string, PesanKomunikasi>();
+          (dbRows as PesanKomunikasi[]).forEach((m) => map.set(m.id, m));
+          localList.forEach((m) => {
+            if (!map.has(m.id)) map.set(m.id, m);
+          });
+          localList = Array.from(map.values()).sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          localStorage.setItem('jurnal_7k_pesan_komunikasi', JSON.stringify(localList));
+        } else {
+          // 2. Fallback ke Storage jika tabel belum tersedia
+          const { data: fileData, error } = await supabase.storage.from('bukti_foto').download('chat/messages.json');
+          if (fileData && !error) {
+            const text = await fileData.text();
+            const remoteList: PesanKomunikasi[] = JSON.parse(text);
+            if (Array.isArray(remoteList)) {
+              const map = new Map<string, PesanKomunikasi>();
+              remoteList.forEach((m) => map.set(m.id, m));
+              localList.forEach((m) => map.set(m.id, m));
+              localList = Array.from(map.values()).sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+              localStorage.setItem('jurnal_7k_pesan_komunikasi', JSON.stringify(localList));
+            }
           }
         }
       } catch {
@@ -1106,7 +1128,7 @@ export class JournalService {
     }
 
     if (userId) {
-      return localList.filter(m => m.pengirim_id === userId || m.penerima_id === userId);
+      return localList.filter((m) => m.pengirim_id === userId || m.penerima_id === userId);
     }
     return localList;
   }
@@ -1119,6 +1141,28 @@ export class JournalService {
     const all = MockDatabase.getPesanKomunikasi();
 
     if (isSupabaseConfigured) {
+      // 1. Simpan ke tabel pesan_komunikasi jika ada
+      try {
+        await supabase.from('pesan_komunikasi').upsert({
+          id: newMsg.id,
+          pengirim_id: newMsg.pengirim_id,
+          pengirim_nama: newMsg.pengirim_nama,
+          pengirim_role: newMsg.pengirim_role,
+          penerima_id: newMsg.penerima_id,
+          penerima_nama: newMsg.penerima_nama,
+          penerima_role: newMsg.penerima_role,
+          kelas_id: newMsg.kelas_id || null,
+          kelas_nama: newMsg.kelas_nama || null,
+          subjek: newMsg.subjek,
+          pesan: newMsg.pesan,
+          sudah_dibaca: newMsg.sudah_dibaca,
+          created_at: newMsg.created_at
+        });
+      } catch {
+        // Abaikan jika tabel belum ada
+      }
+
+      // 2. Simpan juga ke storage sebagai sinkronisasi cadangan
       try {
         const blob = new Blob([JSON.stringify(all)], { type: 'application/json' });
         await supabase.storage.from('bukti_foto').upload('chat/messages.json', blob, {
@@ -1140,6 +1184,11 @@ export class JournalService {
     const all = MockDatabase.getPesanKomunikasi();
     if (isSupabaseConfigured) {
       try {
+        await supabase.from('pesan_komunikasi').update({ sudah_dibaca: true }).eq('id', pesanId);
+      } catch {
+        // silent
+      }
+      try {
         const blob = new Blob([JSON.stringify(all)], { type: 'application/json' });
         await supabase.storage.from('bukti_foto').upload('chat/messages.json', blob, {
           upsert: true,
@@ -1151,4 +1200,5 @@ export class JournalService {
     }
   }
 }
+
 
