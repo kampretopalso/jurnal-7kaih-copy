@@ -1,0 +1,18 @@
+{
+  "name": "Jurnal 7 KAIH - SMPN 2 Glagah",
+  "short_name": "Jurnal 7 KAIH",
+  "description": "Aplikasi Jurnal Harian 7 Kebiasaan Anak Indonesia Hebat Kemendikdasmen - SMPN 2 Glagah",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#064e3b",
+  "theme_color": "#059669",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%23059669'/><path d='M256 64L315 190L454 210L355 308L378 448L256 382L134 448L157 308L58 210L197 190L256 64Z' fill='%23fbbf24'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
