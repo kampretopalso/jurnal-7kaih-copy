@@ -29,8 +29,27 @@ jobs:
 
       - name: Tarik dan Gabungkan Pembaruan dari brownyguy666/jurnal-7kaih
         run: |
+          set -e
+          echo "Menghubungkan ke repositori pusat brownyguy666/jurnal-7kaih..."
           git remote add upstream https://github.com/brownyguy666/jurnal-7kaih.git || git remote set-url upstream https://github.com/brownyguy666/jurnal-7kaih.git
           git fetch upstream main
-          # Merge pembaruan (mendukung baik repo hasil Clone Vercel maupun Fork manual)
-          git merge upstream/main --allow-unrelated-histories -m "chore(sync): update fitur terbaru dari brownyguy666/jurnal-7kaih"
-          git push origin main
+
+          echo "Menggabungkan pembaruan dengan strategi -X theirs..."
+          # Strategi -X theirs memastikan kode pembaruan dari pusat selalu diutamakan tanpa memicu merge conflict (add/add)
+          if ! git merge upstream/main --allow-unrelated-histories -X theirs -m "chore(sync): update fitur terbaru dari brownyguy666/jurnal-7kaih"; then
+            echo "Merge menemui kendala, melakukan sinkronisasi bersih ke upstream/main..."
+            git merge --abort || true
+            git reset --hard upstream/main
+          fi
+
+          echo "Mendorong (push) pembaruan ke repositori sekolah..."
+          if ! git push origin main; then
+            echo "Mencoba alternatif push..."
+            if ! git push origin main --force-with-lease; then
+              echo "::error::Gagal melakukan git push ke branch main!"
+              echo "::error::KEMUNGKINAN BESAR IZIN ACTIONS BELUM DIAKTIFKAN."
+              echo "::error::Buka tab: Settings -> Actions -> General -> Workflow permissions -> pilih 'Read and write permissions' -> klik 'Save'."
+              exit 1
+            fi
+          fi
+          echo "✅ Sinkronisasi berhasil diselesaikan!"
