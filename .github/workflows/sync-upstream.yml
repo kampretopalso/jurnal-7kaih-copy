@@ -1,0 +1,36 @@
+name: Sync Upstream (Pembaruan Otomatis dari Pusat)
+
+on:
+  schedule:
+    - cron: '0 17 * * *' # Berjalan otomatis setiap pukul 00:00 WIB (17:00 UTC)
+  workflow_dispatch: # Memungkinkan operator klik tombol 'Run workflow' kapan saja di tab Actions
+
+permissions:
+  contents: write
+
+jobs:
+  sync_latest_from_upstream:
+    name: Sinkronisasi Fitur Terbaru dari Pusat
+    runs-on: ubuntu-latest
+    # Hanya berjalan pada repositori sekolah hasil fork / clone, tidak berjalan di repositori induk
+    if: github.repository != 'brownyguy666/jurnal-7kaih'
+    steps:
+      - name: Checkout repo sekolah
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Identitas Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Tarik dan Gabungkan Pembaruan dari brownyguy666/jurnal-7kaih
+        run: |
+          git remote add upstream https://github.com/brownyguy666/jurnal-7kaih.git || git remote set-url upstream https://github.com/brownyguy666/jurnal-7kaih.git
+          git fetch upstream main
+          # Merge pembaruan (mendukung baik repo hasil Clone Vercel maupun Fork manual)
+          git merge upstream/main --allow-unrelated-histories -m "chore(sync): update fitur terbaru dari brownyguy666/jurnal-7kaih"
+          git push origin main
